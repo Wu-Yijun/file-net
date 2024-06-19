@@ -7,7 +7,7 @@ const MAX_BODY_LENGTH = 125000;
 const LOCAL = ['zh-CN', {timeZone: 'CST'}, ' (北京时间)'];
 
 
-async function main({github, context, sha}) {
+async function main(github, context, sha) {
   // require modules
   const {execSync} = require('child_process');
   const fs = require('fs');

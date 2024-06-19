@@ -16,16 +16,16 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@main
-      - name: Install rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
+      # - name: Install rust toolchain
+      #   uses: dtolnay/rust-toolchain@stable
+      #   with:
+      #     toolchain: stable
       - name: Build ${{ env.BUILD_MODE }}
         run: cargo build --${{ env.BUILD_MODE }} --bin test
       - name: move executable
         run: |
           mkdir ./.releases
-          cp ./target/$BUILD_MODE/$EXECUTABLE_NAME ./.releases/
+          mv ./target/${{ env.BUILD_MODE }}/${{ env.EXECUTABLE_NAME }} ./.releases/
           cd ./.releases
           ls
       - name: Upload Artifact
@@ -42,6 +42,6 @@ jobs:
         uses: actions/github-script@main
         with: 
           script: |
-            const main = require('.github/workflows/create-git-release.js')
-            await main({github, context, sha='${{ github.sha }}'})
+            const main = require('.github/workflows/create-git-release.js');
+            await main(github, context, '${{ github.sha }}');
         
