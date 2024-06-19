@@ -20,7 +20,7 @@ jobs:
         with:
           toolchain: stable
       - name: Build ${{ env.BUILD_MODE }}
-        run: cargo build --${{ env.BUILD_MODE }} --bin test
+        run: cargo build --${{ env.BUILD_MODE }}
       - name: move executable
         run: |
           mkdir ./.releases

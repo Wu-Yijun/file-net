@@ -8,17 +8,17 @@ repository = "https://github.com/Wu-Yijun/file-net"
 license = "MIT OR GPL-3.0"
 
 [dependencies]
-# clap = { version = "*", features = ["derive"] }
-# windows-sys = { version = "*", features = [
-#     "Win32_Foundation",
-#     "Win32_UI",
-#     "Win32_UI_WindowsAndMessaging",
-# ] }
-# wgpu = "*"
-# eframe = { version = "*", features = ["glow"] }
-# trayicon = "*"
+clap = { version = "*", features = ["derive"] }
+windows-sys = { version = "*", features = [
+    "Win32_Foundation",
+    "Win32_UI",
+    "Win32_UI_WindowsAndMessaging",
+] }
+wgpu = "*"
+eframe = { version = "*", features = ["glow"] }
+trayicon = "*"
 
-# if-addrs = "*"
-# bincode = "*"
-# serde = { version = "*", features = ["derive"] }
-# arboard = "*"
+if-addrs = "*"
+bincode = "*"
+serde = { version = "*", features = ["derive"] }
+arboard = "*"
