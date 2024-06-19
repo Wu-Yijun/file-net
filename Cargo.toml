@@ -1,0 +1,20 @@
+[package]
+name = "file-net"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "*", features = ["derive"] }
+windows-sys = { version = "*", features = [
+    "Win32_Foundation",
+    "Win32_UI",
+    "Win32_UI_WindowsAndMessaging",
+] }
+wgpu = "*"
+eframe = { version = "*", features = ["glow"] }
+trayicon = "*"
+
+if-addrs = "*"
+bincode = "*"
+serde = { version = "*", features = ["derive"] }
+arboard = "*"
