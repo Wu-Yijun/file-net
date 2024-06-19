@@ -28,7 +28,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@main
         with:
-          path: ./.releases/${{ env.EXECUTABLE_NAME }}
+          path: ./.releases/
           name: ${{ env.EXECUTABLE_NAME }}
      
       - name: Set up Node.js
@@ -40,5 +40,5 @@ jobs:
         with: 
           script: |
             const main = require('.github/workflows/create-git-release.js')
-            await main({github, context, core})
+            await main({github, context, ${{ github.sha }}})
         
