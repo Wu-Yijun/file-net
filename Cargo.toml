@@ -22,3 +22,8 @@ if-addrs = "*"
 bincode = "*"
 serde = { version = "*", features = ["derive"] }
 arboard = "*"
+
+
+[[bin]]
+name = "test"
+path = "src/test.rs"

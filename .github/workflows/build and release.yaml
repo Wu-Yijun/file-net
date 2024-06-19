@@ -7,7 +7,8 @@ on:
       - master
 
 env:
-  EXECUTABLE_NAME: file-net.exe
+  # EXECUTABLE_NAME: file-net.exe
+  EXECUTABLE_NAME: test.exe
   BUILD_MODE: release
 
 jobs:
@@ -20,7 +21,7 @@ jobs:
         with:
           toolchain: stable
       - name: Build ${{ env.BUILD_MODE }}
-        run: cargo build --${{ env.BUILD_MODE }}
+        run: cargo build --${{ env.BUILD_MODE }} --bin test
       - name: move executable
         run: |
           mkdir ./.releases
@@ -28,7 +29,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@main
         with:
-          path: ./.releases/
+          path: ./.releases
           name: ${{ env.EXECUTABLE_NAME }}
      
       - name: Set up Node.js
@@ -40,5 +41,5 @@ jobs:
         with: 
           script: |
             const main = require('.github/workflows/create-git-release.js')
-            await main({github, context, ${{ github.sha }}})
+            await main({github, context, sha=${{ github.sha }}})
         
