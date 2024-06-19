@@ -7,8 +7,7 @@ on:
       - master
 
 env:
-  # EXECUTABLE_NAME: file-net.exe
-  EXECUTABLE_NAME: test.exe
+  EXECUTABLE_NAME: file-net.exe
   BUILD_MODE: release
 
 jobs:
@@ -16,10 +15,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@main
-      # - name: Install rust toolchain
-      #   uses: dtolnay/rust-toolchain@stable
-      #   with:
-      #     toolchain: stable
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
       - name: Build ${{ env.BUILD_MODE }}
         run: cargo build --${{ env.BUILD_MODE }} --bin test
       - name: move executable

@@ -22,8 +22,3 @@ license = "MIT OR GPL-3.0"
 # bincode = "*"
 # serde = { version = "*", features = ["derive"] }
 # arboard = "*"
-
-
-[[bin]]
-name = "test"
-path = "src/test.rs"
