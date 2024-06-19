@@ -43,5 +43,5 @@ jobs:
         with: 
           script: |
             const main = require('.github/workflows/create-git-release.js')
-            await main({github, context, sha=${{ github.sha }}})
+            await main({github, context, sha='${{ github.sha }}'})
         
