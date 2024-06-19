@@ -1,0 +1,44 @@
+name: Build and Release
+
+on:
+  # workflow_dispatch:
+  push:
+    branches:
+      - master
+
+env:
+  EXECUTABLE_NAME: file-net.exe
+
+jobs:
+  Cargo-build--Js-upload:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@main
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Build
+        run: cargo build --release
+      - name: move executable
+        run: |
+          mkdir releases
+          cp target/release/$EXECUTABLE_NAME releases/
+      - name: Upload Artifact
+        uses: actions/upload-artifact@main
+        with:
+          asset_path: releases/$EXECUTABLE_NAME
+          asset_name: $EXECUTABLE_NAME
+          asset_content_type: application/octet-stream
+     
+      - name: Set up Node.js
+        uses: actions/setup-node@main
+        with:
+          node-version: latest
+      - name: Make Release with js
+        uses: actions/github-script@main
+        with: 
+          script: |
+            const main = require('.github/workflows/create-git-release.js')
+            await main({github, context, core})
+        
