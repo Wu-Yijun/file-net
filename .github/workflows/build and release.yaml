@@ -26,16 +26,18 @@ jobs:
         run: |
           mkdir ./.releases
           cp ./target/$BUILD_MODE/$EXECUTABLE_NAME ./.releases/
+          cd ./.releases
+          ls
       - name: Upload Artifact
         uses: actions/upload-artifact@main
         with:
-          path: ./.releases
-          name: ${{ env.EXECUTABLE_NAME }}
+          name: file-net-windows64
+          path: ./.releases/${{ env.EXECUTABLE_NAME }}
      
-      - name: Set up Node.js
-        uses: actions/setup-node@main
-        with:
-          node-version: latest
+      # - name: Set up Node.js
+      #   uses: actions/setup-node@main
+      #   with:
+      #     node-version: latest
       - name: Make Release with js
         uses: actions/github-script@main
         with: 
