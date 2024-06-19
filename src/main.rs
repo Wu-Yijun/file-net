@@ -32,6 +32,7 @@ struct MyApplication {
     frames: u64,
     cmd_sender: Sender<MyCommand>,
     msg: Receiver<MyMessage>,
+    dark_mode: bool,
 
     info: String,
     /// ([127,0,0,1], port, state, name)
@@ -40,6 +41,36 @@ struct MyApplication {
 
     is_listened: bool,
     is_connected: bool,
+    page: AppPage,
+}
+
+impl eframe::App for MyApplication {
+    fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
+        // 切换视觉样式
+        if self.dark_mode {
+            ctx.set_visuals(egui::Visuals::dark());
+        } else {
+            ctx.set_visuals(egui::Visuals::light());
+        }
+
+        egui::TopBottomPanel::top("menu bar").show(ctx, |ui| self.draw_menu_bar(ui));
+        egui::SidePanel::left("page bar").show(ctx, |ui| self.draw_side_bar(ui));
+        egui::CentralPanel::default().show(ctx, |ui| match self.page {
+            AppPage::Connect => self.draw_connect_control(ui),
+            AppPage::File => self.draw_file_control(ui),
+            AppPage::Setting => self.draw_setting(ui),
+            AppPage::About => self.draw_about(ui),
+        });
+        self.frames += 1;
+
+        match self.msg.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => (),
+            Ok(MyMessage::Text(t)) => self.info = t,
+            e => println!("{:#?}", e),
+        }
+
+        ctx.request_repaint_after(std::time::Duration::from_secs(2));
+    }
 }
 
 impl MyApplication {
@@ -62,11 +93,13 @@ impl MyApplication {
             frames: 0,
             cmd_sender: sc,
             info: String::new(),
+            dark_mode: false,
             msg: rm,
             listeners: vec![MyTcplistener::NULL],
             connector: MyTcplistener::NULL,
             is_listened: false,
             is_connected: false,
+            page: AppPage::default(),
         }
     }
 
@@ -110,6 +143,50 @@ impl MyApplication {
                     .unwrap();
             }
         }
+    }
+
+    fn draw_connect_control(&mut self, ui: &mut egui::Ui) {
+        for ls in self.listeners.iter_mut() {
+            ui.horizontal(|ui| {
+                ui.label("Listening on ").on_hover_text(ls.name.clone());
+                Self::draw_ip(ui, ls);
+                if ui.button("Delete").clicked() {
+                    ls.state = ListenerState::TODELETE;
+                };
+            });
+        }
+        ui.horizontal(|ui| {
+            if ui.button("Auto detecting ip.").clicked() {
+                self.detecting_all_ip4();
+            }
+            if ui.button("Connecting All").clicked() {
+                for ls in self.listeners.iter_mut() {
+                    if ls.state == ListenerState::READY {
+                        ls.state = ListenerState::TOLISTEN;
+                    }
+                }
+            }
+            if ui.button("Disconnecting All").clicked() {
+                for ls in self.listeners.iter_mut() {
+                    if ls.state == ListenerState::LISTENING || ls.state == ListenerState::ACCEPTED {
+                        ls.state = ListenerState::TOSTOP;
+                    }
+                }
+            }
+            if ui.button("Clear All").clicked() {
+                for ls in self.listeners.iter_mut() {
+                    ls.state = ListenerState::TODELETE;
+                }
+            }
+        });
+        self.handle_listener();
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label("Connect to ");
+            let ls = &mut self.connector;
+            Self::draw_ip(ui, ls);
+            self.handle_connector();
+        });
     }
 
     fn draw_ip(ui: &mut egui::Ui, ls: &mut MyTcplistener) {
@@ -300,6 +377,7 @@ impl MyApplication {
                     .clicked()
                 {
                     ui.close_menu();
+                    self.dark_mode = !self.dark_mode;
                 }
                 ui.separator();
                 if ui
@@ -325,70 +403,33 @@ impl MyApplication {
                     self.cmd_sender.send(MyCommand::TrayHide).unwrap();
                 } else if r.key_pressed(SHORT_CUT_CLOSE.logical_key) {
                     exit(0);
+                } else if r.key_pressed(SHORT_CUT_DARKMODE.logical_key) {
+                    self.dark_mode = !self.dark_mode;
                 }
             }
         })
     }
-}
 
-impl eframe::App for MyApplication {
-    fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
-        egui::TopBottomPanel::top("menu bar").show(ctx, |ui| self.draw_menu_bar(ui));
-        egui::CentralPanel::default().show(ctx, |ui| {
-            for ls in self.listeners.iter_mut() {
-                ui.horizontal(|ui| {
-                    ui.label("Listening on ").on_hover_text(ls.name.clone());
-                    Self::draw_ip(ui, ls);
-                    if ui.button("Delete").clicked() {
-                        ls.state = ListenerState::TODELETE;
-                    };
-                });
-            }
-            ui.horizontal(|ui| {
-                if ui.button("Auto detecting ip.").clicked() {
-                    self.detecting_all_ip4();
-                }
-                if ui.button("Connecting All").clicked() {
-                    for ls in self.listeners.iter_mut() {
-                        if ls.state == ListenerState::READY {
-                            ls.state = ListenerState::TOLISTEN;
-                        }
-                    }
-                }
-                if ui.button("Disconnecting All").clicked() {
-                    for ls in self.listeners.iter_mut() {
-                        if ls.state == ListenerState::LISTENING
-                            || ls.state == ListenerState::ACCEPTED
-                        {
-                            ls.state = ListenerState::TOSTOP;
-                        }
-                    }
-                }
-                if ui.button("Clear All").clicked() {
-                    for ls in self.listeners.iter_mut() {
-                        ls.state = ListenerState::TODELETE;
-                    }
-                }
-            });
-            self.handle_listener();
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Connect to ");
-                let ls = &mut self.connector;
-                Self::draw_ip(ui, ls);
-                self.handle_connector();
-            })
-        });
-        self.frames += 1;
-
-        match self.msg.try_recv() {
-            Err(std::sync::mpsc::TryRecvError::Empty) => (),
-            Ok(MyMessage::Text(t)) => self.info = t,
-            e => println!("{:#?}", e),
+    fn draw_side_bar(&mut self, ui: &mut egui::Ui) {
+        if ui.add_enabled(self.page != AppPage::Connect,  egui::Button::new("Connect")).clicked() {
+            self.page = AppPage::Connect;
         }
-
-        ctx.request_repaint_after(std::time::Duration::from_secs(2));
+        ui.separator();
+        if ui.add_enabled(self.page != AppPage::File,  egui::Button::new("File")).clicked() {
+            self.page = AppPage::File;
+        }
+        ui.separator();
+        if ui.add_enabled(self.page != AppPage::Setting,  egui::Button::new("Setting")).clicked() {
+            self.page = AppPage::Setting;
+        }
+        ui.separator();
+        if ui.add_enabled(self.page != AppPage::About,  egui::Button::new("About")).clicked() {
+            self.page = AppPage::About;
+        }
     }
+    fn draw_file_control(&mut self, ui: &mut egui::Ui) {}
+    fn draw_setting(&mut self, ui: &mut egui::Ui) {}
+    fn draw_about(&mut self, ui: &mut egui::Ui) {}
 }
 
 #[derive(Debug)]
@@ -400,4 +441,13 @@ impl From<String> for MyMessage {
     fn from(value: String) -> Self {
         MyMessage::Text(value)
     }
+}
+
+#[derive(Debug, Default, PartialEq)]
+enum AppPage {
+    #[default]
+    Connect,
+    File,
+    Setting,
+    About,
 }
