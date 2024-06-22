@@ -16,9 +16,11 @@ windows-sys = { version = "*", features = [
 ] }
 wgpu = "*"
 eframe = { version = "*", features = ["glow"] }
+egui_extras = "*"
 trayicon = "*"
 
 if-addrs = "*"
 bincode = "*"
 serde = { version = "*", features = ["derive"] }
+serde_json = "*"
 arboard = "*"

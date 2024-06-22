@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     process::exit,
     sync::mpsc::{Receiver, Sender},
 };
@@ -7,6 +8,7 @@ use arboard::Clipboard;
 use command::{CommandLoop, MyCommand};
 use connect::{ListenerState, MyTcplistener};
 use eframe::egui::{self, Widget};
+use file::FileManager;
 use tray::MyTray;
 
 mod command;
@@ -42,6 +44,12 @@ struct MyApplication {
     is_listened: bool,
     is_connected: bool,
     page: AppPage,
+
+    files: FileManager,
+}
+
+impl MyApplication {
+    const SIDE_BAR_SIZE: f32 = 40.0;
 }
 
 impl eframe::App for MyApplication {
@@ -54,7 +62,10 @@ impl eframe::App for MyApplication {
         }
 
         egui::TopBottomPanel::top("menu bar").show(ctx, |ui| self.draw_menu_bar(ui));
-        egui::SidePanel::left("page bar").show(ctx, |ui| self.draw_side_bar(ui));
+        egui::SidePanel::left("page bar")
+            .resizable(false)
+            .exact_width(Self::SIDE_BAR_SIZE)
+            .show(ctx, |ui| self.draw_side_bar(ui));
         egui::CentralPanel::default().show(ctx, |ui| match self.page {
             AppPage::Connect => self.draw_connect_control(ui),
             AppPage::File => self.draw_file_control(ui),
@@ -64,8 +75,16 @@ impl eframe::App for MyApplication {
         self.frames += 1;
 
         match self.msg.try_recv() {
+            // no message
             Err(std::sync::mpsc::TryRecvError::Empty) => (),
+
             Ok(MyMessage::Text(t)) => self.info = t,
+            Ok(MyMessage::ConnectInterrupt(is_host)) => {
+                //...
+            }
+            // ...
+
+            // unexpected
             e => println!("{:#?}", e),
         }
 
@@ -100,6 +119,8 @@ impl MyApplication {
             is_listened: false,
             is_connected: false,
             page: AppPage::default(),
+
+            files: FileManager::new(),
         }
     }
 
@@ -411,23 +432,135 @@ impl MyApplication {
     }
 
     fn draw_side_bar(&mut self, ui: &mut egui::Ui) {
-        if ui.add_enabled(self.page != AppPage::Connect,  egui::Button::new("Connect")).clicked() {
+        if ui
+            .add_enabled(
+                self.page != AppPage::Connect,
+                egui::Button::new("Connect")
+                    .min_size([Self::SIDE_BAR_SIZE, Self::SIDE_BAR_SIZE].into()),
+            )
+            .clicked()
+        {
             self.page = AppPage::Connect;
         }
         ui.separator();
-        if ui.add_enabled(self.page != AppPage::File,  egui::Button::new("File")).clicked() {
+        if ui
+            .add_enabled(
+                self.page != AppPage::File,
+                egui::Button::new("File")
+                    .min_size([Self::SIDE_BAR_SIZE, Self::SIDE_BAR_SIZE].into()),
+            )
+            .clicked()
+        {
             self.page = AppPage::File;
         }
         ui.separator();
-        if ui.add_enabled(self.page != AppPage::Setting,  egui::Button::new("Setting")).clicked() {
+        if ui
+            .add_enabled(
+                self.page != AppPage::Setting,
+                egui::Button::new("Setting")
+                    .min_size([Self::SIDE_BAR_SIZE, Self::SIDE_BAR_SIZE].into()),
+            )
+            .clicked()
+        {
             self.page = AppPage::Setting;
         }
         ui.separator();
-        if ui.add_enabled(self.page != AppPage::About,  egui::Button::new("About")).clicked() {
+        if ui
+            .add_enabled(
+                self.page != AppPage::About,
+                egui::Button::new("About")
+                    .min_size([Self::SIDE_BAR_SIZE, Self::SIDE_BAR_SIZE].into()),
+            )
+            .clicked()
+        {
             self.page = AppPage::About;
         }
     }
-    fn draw_file_control(&mut self, ui: &mut egui::Ui) {}
+    fn draw_file_control(&mut self, ui: &mut egui::Ui) {
+        ui.label("file-manager");
+        ui.separator();
+        let text_height = egui::TextStyle::Body
+            .resolve(ui.style())
+            .size
+            .max(ui.spacing().interact_size.y);
+
+        let available_height = ui.available_height();
+        let table = egui_extras::TableBuilder::new(ui)
+            .striped(true)
+            .resizable(false)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(egui_extras::Column::auto())
+            .column(egui_extras::Column::auto())
+            .column(egui_extras::Column::auto())
+            .column(egui_extras::Column::auto())
+            // .column(egui_extras::Column::initial(100.0).range(40.0..=300.0))
+            // .column(
+            //     egui_extras::Column::initial(100.0)
+            //         .at_least(40.0)
+            //         .clip(true),
+            // )
+            // .column(egui_extras::Column::remainder())
+            .min_scrolled_height(0.0)
+            .max_scroll_height(available_height)
+            .sense(egui::Sense::click());
+
+        let mut checked = false;
+        table
+            .header(20.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong("Select");
+                });
+                header.col(|ui| {
+                    ui.strong("Name");
+                });
+                header.col(|ui| {
+                    ui.strong("Path");
+                });
+                header.col(|ui| {
+                    ui.strong("Type");
+                });
+                // header.col(|ui| {
+                //     ui.strong("Clipped text");
+                // });
+                // header.col(|ui| {
+                //     ui.strong("Content");
+                // });
+            })
+            .body(|mut body| {
+                for file in self.files.current_files.iter_mut() {
+                    body.row(text_height, |mut row| {
+                        // row.set_selected(self.selection.contains(&row_index));
+
+                        row.col(|ui| {
+                            ui.checkbox(&mut file.is_selected, "");
+                        });
+                        row.col(|ui| {
+                            ui.label(&file.f.name);
+                        });
+                        row.col(|ui| {
+                            let s = file.f.is_linked.clone();
+                            ui.label(s.unwrap_or_default().to_str().unwrap_or_default());
+                        });
+                        row.col(|ui| {
+                            ui.label(if file.f.is_folder { "Folder" } else { "File" });
+                        });
+                        // row.col(|ui| {
+                        //     // ui.label(long_text(row_index));
+                        // });
+                        // row.col(|ui| {
+                        //     // ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                        //     // if is_thick {
+                        //     // ui.heading("Extra thick row");
+                        //     // } else {
+                        //     ui.label("Normal row");
+                        //     // }
+                        // });
+
+                        // self.toggle_row_selection(row_index, &row.response());
+                    });
+                }
+            });
+    }
     fn draw_setting(&mut self, ui: &mut egui::Ui) {}
     fn draw_about(&mut self, ui: &mut egui::Ui) {}
 }
@@ -435,6 +568,7 @@ impl MyApplication {
 #[derive(Debug)]
 enum MyMessage {
     Text(String),
+    ConnectInterrupt(bool),
 }
 
 impl From<String> for MyMessage {
