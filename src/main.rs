@@ -7,8 +7,8 @@ use std::{
 use arboard::Clipboard;
 use command::{CommandLoop, MyCommand};
 use connect::{ListenerState, MyTcplistener};
-use eframe::egui::{self, Widget};
-use file::FileManager;
+use eframe::egui::{self, Align2, Widget};
+use file::{FileManager, FileStateExtend};
 use tray::MyTray;
 
 mod command;
@@ -50,6 +50,7 @@ struct MyApplication {
 
 impl MyApplication {
     const SIDE_BAR_SIZE: f32 = 40.0;
+    const FILE_LIST_HEIGHT: f32 = 15.0;
 }
 
 impl eframe::App for MyApplication {
@@ -493,6 +494,7 @@ impl MyApplication {
             .column(egui_extras::Column::auto())
             .column(egui_extras::Column::auto())
             .column(egui_extras::Column::auto())
+            .column(egui_extras::Column::auto())
             // .column(egui_extras::Column::initial(100.0).range(40.0..=300.0))
             // .column(
             //     egui_extras::Column::initial(100.0)
@@ -504,7 +506,7 @@ impl MyApplication {
             .max_scroll_height(available_height)
             .sense(egui::Sense::click());
 
-        let mut checked = false;
+        let mut rows_clicked = None;
         table
             .header(20.0, |mut header| {
                 header.col(|ui| {
@@ -514,10 +516,13 @@ impl MyApplication {
                     ui.strong("Name");
                 });
                 header.col(|ui| {
-                    ui.strong("Path");
+                    ui.strong("Type");
                 });
                 header.col(|ui| {
-                    ui.strong("Type");
+                    ui.strong("State");
+                });
+                header.col(|ui| {
+                    ui.strong("Path");
                 });
                 // header.col(|ui| {
                 //     ui.strong("Clipped text");
@@ -530,36 +535,70 @@ impl MyApplication {
                 for file in self.files.current_files.iter_mut() {
                     body.row(text_height, |mut row| {
                         // row.set_selected(self.selection.contains(&row_index));
-
                         row.col(|ui| {
                             ui.checkbox(&mut file.is_selected, "");
                         });
                         row.col(|ui| {
-                            ui.label(&file.f.name);
+                            ui.add(egui::Label::new(&file.f.name).selectable(false));
+                        });
+                        row.col(|ui| {
+                            let text = if file.f.is_folder { "Folder" } else { "File" };
+                            ui.add(egui::Label::new(text).selectable(false));
+                        });
+                        row.col(|ui| {
+                            let text =
+                                format!("local:{}, sync:{}", file.f.is_local, file.f.is_synced);
+                            ui.add(egui::Label::new(text).selectable(false));
                         });
                         row.col(|ui| {
                             let s = file.f.is_linked.clone();
-                            ui.label(s.unwrap_or_default().to_str().unwrap_or_default());
+                            ui.add(
+                                egui::Label::new(
+                                    s.unwrap_or_default().to_str().unwrap_or_default(),
+                                )
+                                .selectable(false),
+                            );
                         });
-                        row.col(|ui| {
-                            ui.label(if file.f.is_folder { "Folder" } else { "File" });
-                        });
-                        // row.col(|ui| {
-                        //     // ui.label(long_text(row_index));
-                        // });
-                        // row.col(|ui| {
-                        //     // ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                        //     // if is_thick {
-                        //     // ui.heading("Extra thick row");
-                        //     // } else {
-                        //     ui.label("Normal row");
-                        //     // }
-                        // });
-
-                        // self.toggle_row_selection(row_index, &row.response());
+                        if row.response().clicked_by(egui::PointerButton::Secondary) {
+                            rows_clicked = Some(file.clone());
+                        }
                     });
                 }
             });
+
+        self.draw_file_control_menu(ui, rows_clicked);
+    }
+    fn draw_file_control_menu(&mut self, ui: &mut egui::Ui, rows_clicked: Option<FileStateExtend>) {
+        if ui.button("Send").clicked() {
+            let files: Vec<_> = self
+                .files
+                .current_files
+                .iter()
+                .filter_map(|f| {
+                    if f.is_selected {
+                        Some(f.to_owned())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if !files.is_empty() {
+                self.cmd_sender.send(MyCommand::SendFiles(files)).unwrap();
+            }
+        }
+        if let Some(file) = rows_clicked {
+            println!("Click this row! {:?}", file);
+            let pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
+            let mut ui = ui.child_ui(
+                egui::Rect {
+                    min: pos,
+                    max: [f32::INFINITY, f32::INFINITY].into(),
+                },
+                ui.layout().to_owned(),
+            );
+            ui.label("text");
+            ui.label("text2");
+        }
     }
     fn draw_setting(&mut self, ui: &mut egui::Ui) {}
     fn draw_about(&mut self, ui: &mut egui::Ui) {}

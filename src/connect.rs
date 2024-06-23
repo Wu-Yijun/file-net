@@ -2,11 +2,17 @@ use std::{
     error::Error,
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
+    sync::mpsc::{Receiver, Sender},
     thread::{self, JoinHandle},
     time::Duration,
 };
 
 use if_addrs::Ifv4Addr;
+
+use crate::{
+    command::{MyCommand, MyConnectCommand},
+    file::FileState,
+};
 
 pub struct MyTcplistener {
     pub ip4: [(u8, String); 4],
@@ -262,10 +268,26 @@ pub enum TCPSignal {
         ip_addr: String,
         name: String,
     },
+    AddTcpStream,
+    PostFile(FileState),
     Parden,
     Shut,
     #[default]
     ErrorInto,
+}
+
+impl TCPSignal {
+    pub const AC: Self = Self::Accept {
+        ip_addr: String::new(),
+        name: String::new(),
+    };
+    pub fn is_ok(&self) -> bool {
+        if let TCPSignal::Accept { .. } = self {
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl From<&Vec<u8>> for TCPSignal {
@@ -314,4 +336,153 @@ pub fn tcp_read(stream: &mut TcpStream) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut res = vec![0; len];
     stream.read_exact(&mut res)?;
     Ok(res)
+}
+
+pub fn connect_loop(
+    mut ts: TcpStream,
+    cmd_s: Sender<MyCommand>,
+    sx: Receiver<MyConnectCommand>,
+    mut tls: Option<TcpListener>,
+) {
+    let mut error_cnt = 0;
+    // 0 for Nothing
+    //
+    // 1 for AddTcpStream send
+    // 2 for AddTcpStream response
+    // 3 for connect to TcpStream
+    //
+    let mut action = 0;
+    loop {
+        match sx.try_recv() {
+            Ok(MyConnectCommand::ToStop) => {
+                println!("[Connect Loop] Stop");
+                return;
+            }
+            Ok(MyConnectCommand::AddTcpStream) => {
+                println!("[Connect Loop]AddTcpStream");
+                action = 1;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => (),
+            Err(e) => {
+                println!("[Connect Loop] Error {e}");
+                return;
+            }
+        }
+        match tcp_read(&mut ts) {
+            Ok(data) => {
+                println!("Size: {}", data.len());
+                let signal: TCPSignal = data.into();
+                match signal {
+                    TCPSignal::Accept { .. } => {
+                        println!("[Signal Loop Ac]");
+                        match action {
+                            0 => {
+                                error_cnt = 0;
+                                thread::sleep(Duration::from_millis(1000));
+                                if let Err(e) = tcp_write(&mut ts, &TCPSignal::AC.into()) {
+                                    println!("[Signal][Send] Error {e}");
+                                }
+                            }
+                            1 if tls.is_some() => {
+                                if let Err(e) = tcp_write(&mut ts, &TCPSignal::AddTcpStream.into())
+                                {
+                                    println!("[Signal][Request][AddTcpStream] Error {e}");
+                                    error_cnt += 1;
+                                } else {
+                                    action = 2;
+                                }
+                            }
+                            2 if tls.is_some() => {
+                                if let Err(e) = tcp_write(&mut ts, &TCPSignal::AC.into()) {
+                                    println!("[Signal][AddTcpStream][Reponse][Send] Error {e}");
+                                    error_cnt += 1;
+                                } else {
+                                    // CAUTION: ⚠️ This will block connect loop!
+                                    match tls.as_ref().unwrap().accept() {
+                                        Ok((ts, addr)) => {
+                                            println!("[Signal][AddTcpStream][Success] {:?}", addr);
+                                            cmd_s.send(MyCommand::AddTcpSender(ts)).unwrap();
+                                            action = 0;
+                                        }
+                                        Err(e) => {
+                                            println!("[Signal][AddTcpStream][Link][Error] {e}");
+                                            error_cnt += 1;
+                                        }
+                                    }
+                                }
+                            }
+                            3 if tls.is_none() => {
+                                if let Err(e) = tcp_write(&mut ts, &TCPSignal::AC.into()) {
+                                    println!("[Signal][AddTcpStream][Reponse][Send] Error {e}");
+                                    error_cnt += 1;
+                                } else {
+                                    // CAUTION: ⚠️ This will block connect loop!
+                                    match TcpStream::connect(ts.peer_addr().unwrap()) {
+                                        Ok(ts) => {
+                                            println!("[Signal][AddTcpStream][Success]");
+                                            cmd_s.send(MyCommand::AddTcpReceiver(ts)).unwrap();
+                                            action = 0;
+                                        }
+                                        Err(e) => {
+                                            println!("[Signal][AddTcpStream][Link][Error] {e}");
+                                            error_cnt += 1;
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {
+                                println!("[Signal] Not support action<{action}>");
+                            }
+                        }
+                    }
+                    TCPSignal::Parden => {
+                        println!("[Signal] To send again");
+                        thread::sleep(Duration::from_millis(200));
+                        if let Err(e) = tcp_write(&mut ts, &TCPSignal::AC.into()) {
+                            println!("[Signal][Send] Error {e}");
+                        }
+                    }
+                    TCPSignal::Shut => {
+                        println!("[Signal] To close");
+                        cmd_s.send(MyCommand::ConnectLoopStop).unwrap();
+                    }
+                    TCPSignal::ErrorInto => {
+                        println!("[Signal] Error!");
+                    }
+                    TCPSignal::AddTcpStream => {
+                        // response ac
+                        error_cnt = 0;
+                        thread::sleep(Duration::from_millis(1000));
+                        if let Err(e) = tcp_write(&mut ts, &TCPSignal::AC.into()) {
+                            println!("[Signal][AddTcpStream][Reply] Error {e}");
+                        } else {
+                            action = 3;
+                        }
+                        // state to 3
+                    }
+                    #[allow(unreachable_patterns)]
+                    e => {
+                        println!("[Unknown][Signal]: {:#?}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("[Signal read Error]: {e}");
+                let data = TCPSignal::Parden.into();
+                match tcp_write(&mut ts, &data) {
+                    Err(e) => {
+                        error_cnt += 1;
+                        println!("[Signal write Error][Parden]: {e}");
+                        if error_cnt > 3 {
+                            println!("[Error] Cannot resume connection. Stop connection...");
+                            cmd_s.send(MyCommand::ConnectLoopStop).unwrap();
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(2000));
+                    }
+                    _ => (),
+                }
+            }
+        }
+    }
 }

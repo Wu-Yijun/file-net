@@ -1,27 +1,27 @@
 {
     "version": [
         0,
-        0
+        1
     ],
     "files": [
         {
             "is_folder": false,
             "is_linked": "D:\\Program\\Rust\\Project\\file-net\\.github\\workflows\\create-git-release.js",
-            "is_copied": false,
+            "is_local": true,
             "is_synced": false,
-            "name": "git-release"
+            "name": "release.js"
         },
         {
             "is_folder": false,
             "is_linked": "D:\\Program\\Rust\\Project\\file-net\\src\\file.rs",
-            "is_copied": false,
+            "is_local": true,
             "is_synced": false,
-            "name": "rust-files"
+            "name": "files.rs"
         },
         {
             "is_folder": true,
             "is_linked": "D:\\Program\\Rust\\Project\\file-net\\assets",
-            "is_copied": false,
+            "is_local": true,
             "is_synced": false,
             "name": "assets"
         }

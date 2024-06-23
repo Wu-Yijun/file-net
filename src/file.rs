@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{error::Error, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -23,11 +23,27 @@ pub struct FileStateExtend {
     pub is_selected: bool,
 }
 
+impl FileStateExtend {
+    pub fn get(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+        // if self.f.is_synced {
+        // } else
+        if let Some(path) = &self.f.is_linked {
+            Ok(std::fs::read(path)?)
+        } else {
+            Err("无法加载文件".into())
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileState {
+    /// 是否是文件夹
     pub is_folder: bool,
+    /// 是否指向文件系统目录，如果不是，则在 ./.file-net/{current}/ 目录下
     pub is_linked: Option<PathBuf>,
-    pub is_copied: bool,
+    /// 是否为本地文件
+    pub is_local: bool,
+    /// 是否在文件夹下存在（如为本地，则是否复制了；如为网络，则是否下载了）
     pub is_synced: bool,
 
     /// name of file in ./.file-net/.../
@@ -41,7 +57,7 @@ struct FilesStructure {
 }
 
 impl FileManager {
-    const VERSION: [usize; 2] = [0, 0];
+    const VERSION: [usize; 2] = [0, 1];
     pub fn new() -> Self {
         let mut res = Self {
             files: vec![],
@@ -115,7 +131,7 @@ fn test() {
             "D:\\Program\\Rust\\Project\\file-net\\.github\\workflows\\create-git-release.js"
                 .into(),
         ),
-        is_copied: false,
+        is_local: true,
         is_synced: false,
         name: "git-release".to_owned(),
     };
