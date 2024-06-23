@@ -69,7 +69,7 @@ impl MyTcplistener {
                     }
                     .into();
                     if let Err(e) = tcp_write(&mut stream, &data) {
-                        println!("[Tcp Connect Accept Response Error]: {e}");
+                        printlnl!("[Tcp Connect Accept Response Error]: {e}");
                         self.state = ListenerState::FAIL;
                         return (None, None);
                     }
@@ -82,7 +82,7 @@ impl MyTcplistener {
                 (None, None)
             }
             Err(e) => {
-                println!("[TcpListener Receive Error]: {:?}", e);
+                printlnl!("[TcpListener Receive Error]: {:?}", e);
                 self.state = ListenerState::FAIL;
                 (None, None)
             }
@@ -119,17 +119,17 @@ impl MyTcplistener {
                                 (Some(l), Some(s.0), data)
                             }
                             Err(e) => {
-                                println!("[Accept Error]: {e}");
+                                printlnl!("[Accept Error]: {e}");
                                 (None, None, vec![])
                             }
                         }));
                     }
                     Ok(l) => {
-                        println!("[Listen Start][Error]:{:?}", l.local_addr().err().unwrap());
+                        printlnl!("[Listen Start][Error]:{:?}", l.local_addr().err().unwrap());
                         self.state = ListenerState::TODELETE;
                     }
                     Err(e) => {
-                        println!("[Listen Error]:{e}");
+                        printlnl!("[Listen Error]:{e}");
                         self.state = ListenerState::TODELETE;
                     }
                 }
@@ -201,7 +201,7 @@ impl MyTcplistener {
                             (None, Some(stream), data)
                         }
                         Err(e) => {
-                            println!("[Connect Send Error]: {e}");
+                            printlnl!("[Connect Send Error]: {e}");
                             (None, None, vec![])
                         }
                     }
@@ -269,7 +269,7 @@ pub enum TCPSignal {
         name: String,
     },
     AddTcpStream,
-    PostFile(FileState),
+    PostFile(FileState, crate::file::FileBlocks),
     Parden,
     Shut,
     #[default]
@@ -342,7 +342,7 @@ pub fn connect_loop(
     mut ts: TcpStream,
     cmd_s: Sender<MyCommand>,
     sx: Receiver<MyConnectCommand>,
-    mut tls: Option<TcpListener>,
+    tls: Option<TcpListener>,
 ) {
     let mut error_cnt = 0;
     // 0 for Nothing
@@ -351,21 +351,30 @@ pub fn connect_loop(
     // 2 for AddTcpStream response
     // 3 for connect to TcpStream
     //
-    let mut action = 0;
+    // 4 for sending {action_signal}
+    let mut action: i32 = 0;
+    let mut action_signal = TCPSignal::AC;
     loop {
-        match sx.try_recv() {
-            Ok(MyConnectCommand::ToStop) => {
-                println!("[Connect Loop] Stop");
-                return;
-            }
-            Ok(MyConnectCommand::AddTcpStream) => {
-                println!("[Connect Loop]AddTcpStream");
-                action = 1;
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => (),
-            Err(e) => {
-                println!("[Connect Loop] Error {e}");
-                return;
+        if action == 0 {
+            match sx.try_recv() {
+                Ok(MyConnectCommand::ToStop) => {
+                    println!("[Connect Loop] Stop");
+                    return;
+                }
+                Ok(MyConnectCommand::AddTcpStream) => {
+                    println!("[Connect Loop]AddTcpStream");
+                    action = 1;
+                }
+                Ok(MyConnectCommand::TCPSignal(s)) => {
+                    println!("[Connect Loop]SendTCPSignal");
+                    action_signal = s;
+                    action = 4;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => (),
+                Err(e) => {
+                    println!("[Connect Loop] Error {e}");
+                    return;
+                }
             }
         }
         match tcp_read(&mut ts) {
@@ -392,6 +401,15 @@ pub fn connect_loop(
                                     action = 2;
                                 }
                             }
+                            1 if tls.is_none() => {
+                                if let Err(e) = tcp_write(&mut ts, &TCPSignal::AddTcpStream.into())
+                                {
+                                    println!("[Signal][Request][AddTcpStream] Error {e}");
+                                    error_cnt += 1;
+                                } else {
+                                    action = 2;
+                                }
+                            }
                             2 if tls.is_some() => {
                                 if let Err(e) = tcp_write(&mut ts, &TCPSignal::AC.into()) {
                                     println!("[Signal][AddTcpStream][Reponse][Send] Error {e}");
@@ -405,7 +423,7 @@ pub fn connect_loop(
                                             action = 0;
                                         }
                                         Err(e) => {
-                                            println!("[Signal][AddTcpStream][Link][Error] {e}");
+                                            printlnl!("[Signal][AddTcpStream][Link][Error] {e}");
                                             error_cnt += 1;
                                         }
                                     }
@@ -424,14 +442,22 @@ pub fn connect_loop(
                                             action = 0;
                                         }
                                         Err(e) => {
-                                            println!("[Signal][AddTcpStream][Link][Error] {e}");
+                                            printlnl!("[Signal][AddTcpStream][Link][Error] {e}");
                                             error_cnt += 1;
                                         }
                                     }
                                 }
                             }
+                            4 => {
+                                if let Err(e) = tcp_write(&mut ts, &(&action_signal).into()) {
+                                    printlnl!("[Signal][Send] Error {e}");
+                                    error_cnt += 1;
+                                } else {
+                                    action = 0;
+                                }
+                            }
                             _ => {
-                                println!("[Signal] Not support action<{action}>");
+                                printlnl!("[Signal][Error] Not support action<{action}>");
                             }
                         }
                     }
@@ -450,15 +476,32 @@ pub fn connect_loop(
                         println!("[Signal] Error!");
                     }
                     TCPSignal::AddTcpStream => {
-                        // response ac
-                        error_cnt = 0;
-                        thread::sleep(Duration::from_millis(1000));
-                        if let Err(e) = tcp_write(&mut ts, &TCPSignal::AC.into()) {
-                            println!("[Signal][AddTcpStream][Reply] Error {e}");
+                        // 如果是 host 则新增一个连接
+                        if tls.is_some() {
+                            if action == 0 {
+                                action = 1;
+                                if let Err(e) = tcp_write(&mut ts, &TCPSignal::AC.into()) {
+                                    println!("[Signal][Send] Error {e}");
+                                }
+                            }
                         } else {
-                            action = 3;
+                            // 如果是客户端，尝试连接到 host
+                            // response ac
+                            thread::sleep(Duration::from_millis(1000));
+                            if let Err(e) = tcp_write(&mut ts, &TCPSignal::AC.into()) {
+                                println!("[Signal][AddTcpStream][Reply] Error {e}");
+                                error_cnt += 1;
+                            } else {
+                                action = 3;
+                                if let Err(e) = tcp_write(&mut ts, &TCPSignal::AC.into()) {
+                                    println!("[Signal][Send] Error {e}");
+                                }
+                            }
                         }
-                        // state to 3
+                    }
+                    TCPSignal::PostFile(f, id) => {
+                        // printlnl!("POST file!");
+                        cmd_s.send(MyCommand::ReceiveFile(f, id)).unwrap();
                     }
                     #[allow(unreachable_patterns)]
                     e => {
@@ -467,14 +510,14 @@ pub fn connect_loop(
                 }
             }
             Err(e) => {
-                println!("[Signal read Error]: {e}");
+                printlnl!("[Signal read Error]: {e}");
                 let data = TCPSignal::Parden.into();
                 match tcp_write(&mut ts, &data) {
                     Err(e) => {
                         error_cnt += 1;
-                        println!("[Signal write Error][Parden]: {e}");
+                        printlnl!("[Signal write Error][Parden]: {e}");
                         if error_cnt > 3 {
-                            println!("[Error] Cannot resume connection. Stop connection...");
+                            printlnl!("[Error] Cannot resume connection. Stop connection...");
                             cmd_s.send(MyCommand::ConnectLoopStop).unwrap();
                             return;
                         }

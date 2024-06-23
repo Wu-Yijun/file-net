@@ -24,6 +24,20 @@
             "is_local": true,
             "is_synced": false,
             "name": "assets"
+        },
+        {
+            "is_folder": false,
+            "is_linked": "D:\\Program\\Rust\\Project\\file-net\\src\\tray.rs",
+            "is_local": true,
+            "is_synced": false,
+            "name": "tray.rs"
+        },
+        {
+            "is_folder": false,
+            "is_linked": null,
+            "is_local": true,
+            "is_synced": false,
+            "name": "test.bin"
         }
     ]
 }

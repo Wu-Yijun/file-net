@@ -10,7 +10,11 @@ use std::{
     time::Duration,
 };
 
-use crate::{connect::connect_loop, file::FileStateExtend, MyMessage};
+use crate::{
+    connect::connect_loop,
+    file::{FileBlock, FileBlocks, FileState, FileStateExtend},
+    MyMessage,
+};
 
 use crate::connect;
 use connect::{tcp_read, tcp_write, TCPSignal};
@@ -29,6 +33,7 @@ pub enum MyCommand {
     SendFileError(usize, SendFileErrorType),
     SendFileOk(usize, SendFileOkType),
 
+    ReceiveFile(FileState, FileBlocks),
     ReceiveFileError(usize, ReceiveFileErrorType),
     ReceiveFileOk(usize, ReceiveFileOkType),
 
@@ -78,6 +83,12 @@ impl ReceiveFileOkType {
 pub enum MyConnectCommand {
     ToStop,
     AddTcpStream,
+    TCPSignal(TCPSignal),
+}
+impl From<TCPSignal> for MyConnectCommand {
+    fn from(signal: TCPSignal) -> Self {
+        Self::TCPSignal(signal)
+    }
 }
 
 struct MyBlockSender {
@@ -91,7 +102,7 @@ impl MyBlockSender {
         Self {
             streams: Arc::new(Mutex::new(Vec::new())),
             msg,
-            counter: Arc::new(AtomicUsize::new(0)),
+            counter: Arc::new(AtomicUsize::new(1)),
         }
     }
     fn push(&mut self, ts: TcpStream) {
@@ -101,50 +112,78 @@ impl MyBlockSender {
         self.streams.lock().unwrap().pop()
     }
     /// return a run id
-    pub fn send(&mut self, file: FileStateExtend) -> usize {
+    pub fn send(&mut self, file: FileStateExtend) -> FileBlocks {
         let mut slf = self.clone();
         let id = self.next_id();
+        let data = match file.f.get() {
+            Ok(data) => data,
+            Err(e) => {
+                println!("Read file error: {e}");
+                self.msg
+                    .send(MyCommand::SendFileError(
+                        id,
+                        SendFileErrorType::CannotReadFile,
+                    ))
+                    .unwrap();
+                return FileBlocks::default();
+            }
+        };
+        let mut fb = FileBlocks::new(id);
+        fb.load(data);
+        let res = fb.info();
+        printlnl!("FILE;; {:#?}", res);
         thread::spawn(move || {
-            let data = match file.get() {
-                Ok(data) => data,
-                Err(e) => {
-                    println!("Read file error: {e}");
-                    slf.msg
-                        .send(MyCommand::SendFileError(
-                            id,
-                            SendFileErrorType::CannotReadFile,
-                        ))
-                        .unwrap();
-                    return;
-                }
-            };
-            if let Some(mut ts) = slf.pop() {
-                println!("Trying to send file......");
-                tcp_write(&mut ts, &data).unwrap();
-                println!("Send ok. Trying to recv response......");
-                let signal: TCPSignal = tcp_read(&mut ts).unwrap().into();
-                println!("Recv ok.");
-                if signal.is_ok() {
-                    slf.msg
-                        .send(MyCommand::SendFileOk(id, SendFileOkType::SendDone))
-                        .unwrap();
-                    return;
+            let mut pos = 0;
+            while !fb.is_finished() {
+                if let Some(mut ts) = slf.pop() {
+                    // println!("Trying to send file......");
+                    let fdata = fb.get(pos);
+                    let file: FileBlock = (&fdata).into();
+                    printlnl!("Sending File Block Info: {}:{}", file.file_id, file.index);
+                    tcp_write(&mut ts, &fdata).unwrap();
+                    // println!("Send ok. Trying to recv response......");
+                    let recdata = match tcp_read(&mut ts) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            printlnl!("Error {e}");
+                            break;
+                        }
+                    };
+                    let signal: TCPSignal = recdata.into();
+                    println!("Recv ok.");
+                    slf.push(ts);
+
+                    if signal.is_ok() {
+                        slf.msg
+                            .send(MyCommand::SendFileOk(
+                                id,
+                                SendFileOkType::SendProgress(pos as f32 / fb.block_num as f32),
+                            ))
+                            .unwrap();
+                        fb.done(pos);
+                        pos += 1;
+                    } else {
+                        printlnl!("Send file error: {:?}", signal);
+                        slf.msg
+                            .send(MyCommand::SendFileError(id, SendFileErrorType::SendError))
+                            .unwrap();
+                        continue;
+                    }
                 } else {
-                    println!("Send file error: {:?}", signal);
+                    printlnl!("Send file error: Cannot find tcp stream!");
+                    thread::sleep(Duration::from_millis(1500));
                     slf.msg
                         .send(MyCommand::SendFileError(id, SendFileErrorType::SendError))
                         .unwrap();
-                    return;
+                    continue;
                 }
-            } else {
-                println!("Send file error: Cannot find tcp stream!");
-                slf.msg
-                    .send(MyCommand::SendFileError(id, SendFileErrorType::SendError))
-                    .unwrap();
-                return;
             }
+            slf.msg
+                .send(MyCommand::SendFileOk(id, SendFileOkType::SendDone))
+                .unwrap();
+            println!("Everything Sent");
         });
-        id
+        res
     }
 
     fn next_id(&self) -> usize {
@@ -171,30 +210,81 @@ impl MySenderState {
 }
 
 struct MyBlockReceiver {
-    pub streams: Arc<Mutex<Vec<TcpStream>>>,
+    pub streams: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    /// file id  -->  sender of file id receiver
+    pub allocate_map: Arc<Mutex<HashMap<usize, Sender<FileBlock>>>>,
     pub msg: Sender<MyCommand>,
     counter: Arc<AtomicUsize>,
 }
 
 impl MyBlockReceiver {
     fn new(msg: Sender<MyCommand>) -> Self {
+        // let (sender, receiver) = std::sync::m::channel();
+        // thread::spawn(move||)
         Self {
             streams: Arc::new(Mutex::new(Vec::new())),
             msg,
-            counter: Arc::new(AtomicUsize::new(0)),
+            counter: Arc::new(AtomicUsize::new(1)),
+            allocate_map: Arc::new(Mutex::new(HashMap::new())),
         }
     }
-    fn push(&mut self, ts: TcpStream) {
-        self.streams.lock().unwrap().push(ts)
-    }
-    fn pop(&mut self) -> Option<TcpStream> {
-        self.streams.lock().unwrap().pop()
+    fn push(&mut self, mut ts: TcpStream) {
+        let map = Arc::clone(&self.allocate_map);
+        self.streams
+            .lock()
+            .unwrap()
+            .push(thread::spawn(move || loop {
+                match tcp_read(&mut ts) {
+                    Ok(data) => {
+                        let fb: FileBlock = (&data).into();
+                        if fb.is_valid() {
+                            if let Some(s) = map.lock().unwrap().get(&fb.file_id) {
+                                s.send(fb).unwrap();
+                                tcp_write(&mut ts, &TCPSignal::AC.into()).unwrap();
+                                // printlnl!("OK");
+                            } else {
+                                printlnl!("[Error] file id {} not avaliable", fb.file_id);
+                                thread::sleep(Duration::from_millis(200));
+                                tcp_write(&mut ts, &TCPSignal::Parden.into()).unwrap();
+                            }
+                        } else {
+                            printlnl!("[Error] File block not valid: {:?}", fb);
+                            thread::sleep(Duration::from_millis(200));
+                            tcp_write(&mut ts, &TCPSignal::Parden.into()).unwrap();
+                            panic!();
+                        }
+                    }
+                    Err(e) => {
+                        printlnl!("[Error] {e}");
+                        panic!();
+                    }
+                }
+            }))
     }
     /// return a run id
-    pub fn recv(&mut self) -> usize {
-        let mut slf = self.clone();
+    pub fn recv(&mut self, f: FileState, mut fb: FileBlocks) -> usize {
+        // let mut slf = self.clone();
+        // printlnl!("{:#?}", fb);
+        let (send, recv) = mpsc::channel();
+        self.allocate_map.lock().unwrap().insert(fb.id, send);
         let id = self.next_id();
-        thread::spawn(move || {});
+        thread::spawn(move || {
+            while !fb.is_finished() {
+                match recv.recv() {
+                    Ok(b) => {
+                        println!("Receive block {:?} of file {:?}!", b.index, b.file_id);
+                        fb.set(b);
+                    }
+                    Err(e) => {
+                        printlnl!("[Error] {e}");
+                        panic!();
+                    }
+                }
+            }
+            println!("FB finish!");
+            // save to file
+            fb.save(&f);
+        });
         id
     }
 
@@ -210,6 +300,7 @@ impl Clone for MyBlockReceiver {
             streams: Arc::clone(&self.streams),
             msg: self.msg.clone(),
             counter: self.counter.clone(),
+            allocate_map: Arc::clone(&self.allocate_map),
         }
     }
 }
@@ -275,11 +366,28 @@ impl CommandLoop {
                         self.run_connect_loop(ts, None);
                     }
                     MyCommand::AddTcpSender(ts) => self.block_sender.push(ts),
-                    MyCommand::AddTcpReceiver(ts) => self.block_sender.push(ts),
+                    MyCommand::AddTcpReceiver(ts) => self.block_receiver.push(ts),
                     MyCommand::SendFiles(files) => {
-                        for f in files {
-                            let id = self.block_sender.send(f);
-                            self.block_sender_state.insert(id, MySenderState::new());
+                        // todo: Move add tcp stream inside run not here
+                        self.connect_sender
+                            .as_ref()
+                            .unwrap()
+                            .send(MyConnectCommand::AddTcpStream)
+                            .unwrap();
+                        for mut f in files {
+                            let id = self.block_sender.send(f.clone());
+                            if id.id != 0 {
+                                f.f.is_local = false;
+                                self.block_sender_state.insert(id.id, MySenderState::new());
+                                self.connect_sender
+                                    .as_ref()
+                                    .unwrap()
+                                    .send(TCPSignal::PostFile(f.f, id).into())
+                                    .unwrap();
+                            } else {
+                                // error send file
+                                printlnl!("error send file");
+                            }
                         }
                     }
                     MyCommand::SendFileOk(id, tp) => {
@@ -290,8 +398,15 @@ impl CommandLoop {
                     }
                     MyCommand::SendFileError(id, tp) => {
                         println!("Send file {id} error with {:?}", tp);
-                        // todo: Move add tcp stream inside run not here
-                        self.connect_sender.as_ref().unwrap().send(MyConnectCommand::AddTcpStream).unwrap();
+                    }
+                    MyCommand::ReceiveFile(f, mut fb) => {
+                        fb.init();
+                        if self.block_receiver_state.contains_key(&fb.id) {
+                            printlnl!("[Error] Cannot have two runs with same id!");
+                        } else {
+                            let id = self.block_receiver.recv(f, fb);
+                            self.block_receiver_state.insert(id, MyReceiverState::new());
+                        }
                     }
                     e => println!("[Unknown Command]{:#?}", e),
                 }

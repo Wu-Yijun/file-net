@@ -1,3 +1,9 @@
+macro_rules! printlnl {
+    ($($arg:tt)*) => {
+        println!("-- File: {}, Line: {}: \n\t{}", file!(), line!(), format_args!($($arg)*));
+    };
+}
+
 use std::{
     fmt::Debug,
     process::exit,
